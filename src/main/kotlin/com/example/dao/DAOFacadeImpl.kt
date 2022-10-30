@@ -43,10 +43,4 @@ class DAOFacadeImpl : DAOFacade {
     }
 }
 
-val dao: DAOFacade = DAOFacadeImpl().apply {
-    runBlocking {
-        if(allArticles().isEmpty()) {
-            addNewArticle("The drive to develop!", "...it's what keeps me going.")
-        }
-    }
-}
+
