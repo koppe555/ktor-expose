@@ -33,20 +33,12 @@ class DAOFacadeCacheImpl(
     }
 
     override suspend fun article(id: Int): Article? {
-        println("======================")
-        println("これはarticlesCache")
-        println(articlesCache)
-        println("======================")
         return articlesCache[id]
             ?: delegate.article(id)
                 .also { article -> articlesCache.put(id, article) }
     }
 
     override suspend fun addNewArticle(title: String, body: String): Article? {
-        println("======================")
-        println("これはarticlesCache")
-        println(articlesCache)
-        println("======================")
         return delegate.addNewArticle(title, body)
             ?.also { article -> articlesCache.put(article.id, article) }
     }

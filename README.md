@@ -33,6 +33,51 @@ fun Application.configureRouting() {
 ```
 
 
+## databeの処理の流れ
+
+Application.ktでデータベースを起動。
+```
+fun Application.module() {
+    DatabaseFactory.init(environment.config)
+}
+```
+
+initの引数のenviroment.configは `main/resource/application.conf`
+
+
+```
+fun init(config: ApplicationConfig) {
+    val driverClassName = config.property("storage.driverClassName").getString()
+    val jdbcURL = config.property("storage.jdbcURL").getString() +
+            (config.propertyOrNull("storage.dbFilePath")?.getString()?.let {
+                File(it).canonicalFile.absolutePath
+            } ?: "")
+    val database = Database.connect(createHikariDataSource(url = jdbcURL, driver = driverClassName))
+    transaction(database) {
+        SchemaUtils.create(Articles)
+    }
+}
+```
+
+
+
+
+
+
+```
+storage {
+    driverClassName = "org.h2.Driver"
+    jdbcURL = "jdbc:h2:file:"
+    dbFilePath = build/db
+    ehcacheFilePath = build/ehcache
+}
+
+```
+
+
+
+
+
 ## FreeMaker
 
 JAVA系のテンプレートエンジン。pluginで追加している。
@@ -82,6 +127,10 @@ object DatabaseFactory {
 driverClassNameとjbdcURLをハードコーディングしてるが設定ファイルに記述することも可能
 https://ktor.io/docs/configurations.html#configuration-file
 
+
+
+
+
 ### Facade
 ファサードと読む。Javaのデザインパターンの一つ。建物を正面から見た窓口という意味。
 その名の通り、連続する一連の処理を窓口を提供するパターン。
@@ -103,6 +152,8 @@ interface DAOFacade {
     suspend fun deleteArticle(id: Int): Boolean
 }
 ```
+
+ここで定義したDAOFacadeを `DAOFacadeImpe` と `DAOFacadeCacheImpl` で継承してる。
 
 
 https://geechs-job.com/tips/details/42
@@ -135,3 +186,88 @@ https://openstandia.jp/oss_info/hikaricp/#:~:text=HikariCP%EF%BC%88%E3%83%92%E3%
 
 ### コネクションプール
 DBとデータのやり取りをするときのコネクションをプールしておくこと。プールしたコネクションを繰り返し使うことで、切断、再接続の負荷を軽減する。
+
+
+
+`DatabaseFactory.kt`
+データベースを立ち上げるときに `createHikariDataSource` 経由にすることでコネクションをプールできる。
+
+```
+
+object DatabaseFactory {
+    fun init(config: ApplicationConfig) {
+        val driverClassName = config.property("storage.driverClassName").getString()
+        val jdbcURL = config.property("storage.jdbcURL").getString() +
+                (config.propertyOrNull("storage.dbFilePath")?.getString()?.let {
+                    File(it).canonicalFile.absolutePath
+                } ?: "")
+        val database = Database.connect(createHikariDataSource(url = jdbcURL, driver = driverClassName))
+        transaction(database) {
+            SchemaUtils.create(Articles)
+        }
+    }
+
+    private fun createHikariDataSource(
+        url: String,
+        driver: String
+    ) = HikariDataSource(HikariConfig().apply {
+        driverClassName = driver
+        jdbcUrl = url
+        maximumPoolSize = 3
+        isAutoCommit = false
+        transactionIsolation = "TRANSACTION_REPEATABLE_READ"
+        validate()
+    })
+```
+
+`maximumPoolSize = 3`
+確保最大プール数を指定。
+
+`transactionIsolation`
+分離レベルの設定
+>TRANSACTION_REPEATABLE_READ - このレベルは、トランザクションが読み込むデータが他のトランザクションによって修正されず、読込トランザクションがデータを修正してコミットしない限り変更されないことを保証します。
+
+
+### Ehcache
+javaのライブラリ。キャッシュ機能を提供する。
+
+
+
+Routing.ktでdaoを定義、`DAOFacadeCacheImpl` → `DAOFacadeImpl` の順番でアクセスして、キャッシュ上に存在してなかったら `DAOFacadeImpl` を通してクエリが実行される。クエリ実行後は結果をキャッシュする。
+
+
+```
+    val dao: DAOFacade = DAOFacadeCacheImpl(
+        DAOFacadeImpl(),
+        File(environment.config.property("storage.ehcacheFilePath").getString())
+    ).apply {
+        runBlocking {
+            if(allArticles().isEmpty()) {
+                addNewArticle("The drive to develop!", "...it's what keeps me going.")
+            }
+        }
+    }
+```
+
+最初に一度 `allArticles` を呼んでキャッシュしてる。
+
+
+`DAOFacadeCacheImpl`
+```
+override suspend fun article(id: Int): Article? {
+    return articlesCache[id]
+        ?: delegate.article(id)
+            .also { article -> articlesCache.put(id, article) }
+}
+```
+
+`DAOFacadeImpl`
+```
+override suspend fun article(id: Int): Article? = dbQuery {
+    Articles
+        .select { Articles.id eq id }
+        .map(::resultRowToArticle)
+        .singleOrNull()
+}
+```
+キャッシュ問い合わせ、なければDB問い合わせ、結果を保持。
