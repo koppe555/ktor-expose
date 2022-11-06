@@ -28,17 +28,30 @@ class DAOFacadeCacheImpl(
     private val articlesCache = cacheManager.getCache("articlesCache", Int::class.javaObjectType, Article::class.java)
 
 
-    override suspend fun allArticles(): List<Article> =
-        delegate.allArticles()
+    override suspend fun allArticles(): List<Article> {
+        return delegate.allArticles()
+    }
 
-    override suspend fun article(id: Int): Article? =
-        articlesCache[id]
+    override suspend fun article(id: Int): Article? {
+        println("======================")
+        println("これはarticlesCache")
+        println(articlesCache)
+        println("======================")
+        return articlesCache[id]
             ?: delegate.article(id)
                 .also { article -> articlesCache.put(id, article) }
+    }
 
-    override suspend fun addNewArticle(title: String, body: String): Article? =
-        delegate.addNewArticle(title, body)
+    override suspend fun addNewArticle(title: String, body: String): Article? {
+        println("======================")
+        println("これはarticlesCache")
+        println(articlesCache)
+        println("======================")
+        return delegate.addNewArticle(title, body)
             ?.also { article -> articlesCache.put(article.id, article) }
+    }
+
+
 
     override suspend fun editArticle(id: Int, title: String, body: String): Boolean {
         articlesCache.put(id, Article(id, title, body))
